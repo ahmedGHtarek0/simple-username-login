@@ -2,7 +2,6 @@ import { useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { User, LogIn, Sparkles } from "lucide-react";
 
@@ -10,35 +9,31 @@ interface LoginProps {
   onLogin: (username: string) => void;
 }
 
+const ALLOWED_USERS = ["testname", "elzohary"];
+
 const Login = ({ onLogin }: LoginProps) => {
   const [username, setUsername] = useState("");
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
 
-  const handleLogin = async (e: React.FormEvent) => {
+  const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!username.trim()) return;
+    const trimmed = username.trim().toLowerCase();
+    if (!trimmed) return;
 
     setLoading(true);
-    const { data, error } = await supabase
-      .from("users")
-      .select("username")
-      .eq("username", username.trim())
-      .maybeSingle();
 
-    setLoading(false);
+    setTimeout(() => {
+      setLoading(false);
 
-    if (error) {
-      toast({ title: "Error", description: "Something went wrong.", variant: "destructive" });
-      return;
-    }
+      if (!ALLOWED_USERS.includes(trimmed)) {
+        toast({ title: "Invalid username", description: "User not found.", variant: "destructive" });
+        return;
+      }
 
-    if (!data) {
-      toast({ title: "Invalid username", description: "User not found.", variant: "destructive" });
-      return;
-    }
-
-    onLogin(data.username);
+      localStorage.setItem("loggedInUser", trimmed);
+      onLogin(trimmed);
+    }, 300);
   };
 
   return (
@@ -83,7 +78,7 @@ const Login = ({ onLogin }: LoginProps) => {
             </Button>
           </form>
           <p className="text-center text-xs text-muted-foreground mt-6">
-            Try logging in with <span className="font-semibold text-foreground">testname</span>
+            Try logging in with <span className="font-semibold text-foreground">testname</span> or <span className="font-semibold text-foreground">elzohary</span>
           </p>
         </CardContent>
       </Card>
