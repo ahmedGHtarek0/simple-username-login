@@ -4,7 +4,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { LogOut, Camera, Save, User, Edit3, Clock, CalendarDays } from "lucide-react";
 
@@ -14,19 +13,42 @@ interface DashboardProps {
 }
 
 interface Profile {
-  id: string;
-  user_id: string;
-  display_name: string | null;
-  bio: string | null;
+  display_name: string;
+  bio: string;
   avatar_url: string | null;
+  joined_at: string;
 }
 
+const profileKey = (username: string) => `profile:${username}`;
+
+const loadLocalProfile = (username: string): Profile => {
+  const raw = localStorage.getItem(profileKey(username));
+  if (raw) {
+    try {
+      return JSON.parse(raw) as Profile;
+    } catch {
+      // fall through
+    }
+  }
+  const fresh: Profile = {
+    display_name: username,
+    bio: "",
+    avatar_url: null,
+    joined_at: new Date().toISOString(),
+  };
+  localStorage.setItem(profileKey(username), JSON.stringify(fresh));
+  return fresh;
+};
+
+const saveLocalProfile = (username: string, profile: Profile) => {
+  localStorage.setItem(profileKey(username), JSON.stringify(profile));
+};
+
 const Dashboard = ({ username, onLogout }: DashboardProps) => {
-  const [profile, setProfile] = useState<Profile | null>(null);
-  const [userId, setUserId] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState("");
   const [bio, setBio] = useState("");
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [joinedAt, setJoinedAt] = useState<string>("");
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -34,103 +56,54 @@ const Dashboard = ({ username, onLogout }: DashboardProps) => {
   const { toast } = useToast();
 
   useEffect(() => {
-    loadProfile();
+    const profile = loadLocalProfile(username);
+    setDisplayName(profile.display_name || username);
+    setBio(profile.bio || "");
+    setAvatarUrl(profile.avatar_url);
+    setJoinedAt(profile.joined_at);
   }, [username]);
 
-  const loadProfile = async () => {
-    // Get user id
-    const { data: userData } = await supabase
-      .from("users")
-      .select("id")
-      .eq("username", username)
-      .single();
-
-    if (!userData) return;
-    setUserId(userData.id);
-
-    // Get or create profile
-    const { data: profileData } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("user_id", userData.id)
-      .maybeSingle();
-
-    if (profileData) {
-      setProfile(profileData);
-      setDisplayName(profileData.display_name || "");
-      setBio(profileData.bio || "");
-      setAvatarUrl(profileData.avatar_url);
-    } else {
-      // Create profile
-      const { data: newProfile } = await supabase
-        .from("profiles")
-        .insert({ user_id: userData.id, display_name: username })
-        .select()
-        .single();
-
-      if (newProfile) {
-        setProfile(newProfile);
-        setDisplayName(newProfile.display_name || username);
-      }
-    }
-  };
-
-  const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleAvatarUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file || !userId) return;
+    if (!file) return;
 
     setUploading(true);
-    const fileExt = file.name.split(".").pop();
-    const filePath = `${userId}/avatar.${fileExt}`;
-
-    // Remove old avatar
-    await supabase.storage.from("avatars").remove([filePath]);
-
-    const { error: uploadError } = await supabase.storage
-      .from("avatars")
-      .upload(filePath, file, { upsert: true });
-
-    if (uploadError) {
-      toast({ title: "Upload failed", description: uploadError.message, variant: "destructive" });
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const dataUrl = reader.result as string;
+      const current = loadLocalProfile(username);
+      const updated = { ...current, avatar_url: dataUrl };
+      saveLocalProfile(username, updated);
+      setAvatarUrl(dataUrl);
       setUploading(false);
-      return;
-    }
-
-    const { data: urlData } = supabase.storage.from("avatars").getPublicUrl(filePath);
-    const newUrl = `${urlData.publicUrl}?t=${Date.now()}`;
-
-    await supabase
-      .from("profiles")
-      .update({ avatar_url: newUrl })
-      .eq("user_id", userId);
-
-    setAvatarUrl(newUrl);
-    setUploading(false);
-    toast({ title: "Avatar updated!" });
+      toast({ title: "Avatar updated!" });
+    };
+    reader.onerror = () => {
+      setUploading(false);
+      toast({ title: "Upload failed", description: "Could not read file.", variant: "destructive" });
+    };
+    reader.readAsDataURL(file);
   };
 
-  const handleSave = async () => {
-    if (!userId) return;
+  const handleSave = () => {
     setSaving(true);
-
-    const { error } = await supabase
-      .from("profiles")
-      .update({ display_name: displayName, bio })
-      .eq("user_id", userId);
-
+    const current = loadLocalProfile(username);
+    const updated: Profile = { ...current, display_name: displayName, bio };
+    saveLocalProfile(username, updated);
     setSaving(false);
-
-    if (error) {
-      toast({ title: "Error saving", description: error.message, variant: "destructive" });
-      return;
-    }
-
     setEditing(false);
     toast({ title: "Profile saved!" });
   };
 
+  const handleLogout = () => {
+    localStorage.removeItem("loggedInUser");
+    onLogout();
+  };
+
   const initials = (displayName || username).slice(0, 2).toUpperCase();
-  const joinDate = profile?.id ? new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" }) : "";
+  const joinDate = joinedAt
+    ? new Date(joinedAt).toLocaleDateString("en-US", { month: "long", year: "numeric" })
+    : "";
 
   return (
     <div className="min-h-screen bg-background">
@@ -143,7 +116,7 @@ const Dashboard = ({ username, onLogout }: DashboardProps) => {
             </div>
             Profile
           </h1>
-          <Button variant="ghost" size="sm" onClick={onLogout} className="gap-2 text-muted-foreground hover:text-foreground">
+          <Button variant="ghost" size="sm" onClick={handleLogout} className="gap-2 text-muted-foreground hover:text-foreground">
             <LogOut className="w-4 h-4" />
             Sign Out
           </Button>
